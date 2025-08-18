@@ -1,0 +1,11 @@
+# Python virtual environment
+venv/
+
+# Files
+*.csv
+app.txt
+
+
+# Python cache
+__pycache__/
+*/__pycache__

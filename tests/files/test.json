@@ -1,0 +1,18 @@
+{
+    "S1_Temp": 25.0,
+    "S2_Temp": 24.8,
+    "S3_Temp": 24.5,
+    "S4_Temp": 25.4,
+    "S1_Light": 121,
+    "S2_Light": 34,
+    "S3_Light": 53,
+    "S4_Light": 40,
+    "S1_Sound": 0.08,
+    "S2_Sound": 0.19,
+    "S3_Sound": 0.06,
+    "S4_Sound": 0.06,
+    "S5_CO2": 390,
+    "S5_CO2_Slope": 0.77,
+    "S6_PIR": 0,
+    "S7_PIR": 1
+}  
