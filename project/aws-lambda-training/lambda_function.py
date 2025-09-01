@@ -1,3 +1,8 @@
+# Training_lambda_function
+# Funzione AWS Lambda per addestrare un modello di Machine Learning per la stima dell'occupazione di una stanza
+# Trigger: Caricamento di un file CSV processato nel bucket S3 'room-occupancy-processed'
+# Output: Modello serializzato salvato nel bucket S3 'room-occupancy-models'
+
 import json
 import boto3
 import pandas as pd
@@ -7,16 +12,15 @@ import logging
 import sys
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import accuracy_score, classification_report
 
-# Configurazione del logging per Lambda
+# Configurazione del logging per l'integrazione con AWS CloudWatch
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 for handler in logger.handlers[:]:
     logger.removeHandler(handler)
 
-# Configura handler per CloudWatch
 handler = logging.StreamHandler(sys.stdout)
 formatter = logging.Formatter(
     '[%(levelname)s] %(asctime)s %(name)s: %(message)s',
@@ -25,123 +29,126 @@ formatter = logging.Formatter(
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-# Inizializzazione client S3
+# Inizializzazione del client S3 per interagire con i bucket
 s3_client = boto3.client('s3')
 
 
 def lambda_handler(event, context):
     """
-    Lambda function per il training del modello di occupancy detection.
-    Trigger: upload di CSV processato in 'room-occupancy-processed'
-    Output: Modello serializzato in 'room-occupancy-models'
+    Handler principale della funzione Lambda per l'addestramento del modello.
+    Args:
+        event: Evento S3 contenente informazioni sul file caricato
+        context: Contesto di esecuzione della Lambda
+    Returns:
+        dict: Risposta JSON con informazioni sul training e metriche
     """
     
     try:
-        # Estrazione informazioni dal trigger S3
+        # Estrazione del bucket e del nome del file dall'evento S3
         bucket_name = event['Records'][0]['s3']['bucket']['name']
         object_key = event['Records'][0]['s3']['object']['key']
+        logger.info(f"Avvio addestramento con file: {object_key} dal bucket: {bucket_name}")
 
-        logger.info(f"Training model with file: {object_key} from bucket: {bucket_name}")
-
-        # Controlli di base
+        # Controllo che il bucket sia quello atteso
         if bucket_name != 'room-occupancy-processed':
-            logger.info(f"Ignoring file from bucket: {bucket_name}")
+            logger.info(f"Ignoro file dal bucket non valido: {bucket_name}")
             return {
                 'statusCode': 200,
-                'body': json.dumps({'message': f'Ignored file from {bucket_name}'})
+                'body': json.dumps({'message': f'Ignorato file dal bucket {bucket_name}'})
             }
         
+        # Controllo che il file sia un CSV
         if not object_key.endswith('.csv'):
-            logger.info(f"Ignoring non-CSV file: {object_key}")
+            logger.info(f"Ignoro file non CSV: {object_key}")
             return {
                 'statusCode': 200,
-                'body': json.dumps({'message': f'Ignored non-CSV file: {object_key}'})
+                'body': json.dumps({'message': f'Ignorato file non CSV: {object_key}'})
             }
         
-
-        
-        # Download del file CSV processato
+        # Download del file CSV processato da S3
         response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
         csv_content = response['Body'].read().decode('utf-8')
         
-        # Caricamento dati in DataFrame
+        # Caricamento del CSV in un DataFrame pandas
         df = pd.read_csv(StringIO(csv_content))
-        logger.info(f"Training dataset shape: {df.shape}")
-
+        logger.info(f"Dimensione dataset di addestramento: {df.shape}")
         
         # ========== PREPARAZIONE DATI ==========
         
-        # Separazione features e target
+        # Definizione della colonna target
         target_column = 'Room_Occupancy_Count'
         
+        # Verifico che la colonna target sia presente nel dataset
         if target_column not in df.columns:
-            raise ValueError(f"Target column '{target_column}' not found in dataset")
+            raise ValueError(f"Colonna target '{target_column}' non trovata nel dataset")
         
+        # Separazione delle feature (X) e del target (y)
         X = df.drop(columns=[target_column])
         y = df[target_column]
         
-        logger.info(f"Features: {list(X.columns)}")
-        logger.info(f"Target distribution: \n{y.value_counts().sort_index()}")
+        logger.info(f"Feature utilizzate: {list(X.columns)}")
+        logger.info(f"Distribuzione del target:\n{y.value_counts().sort_index()}")
         
-        # Controllo dati sufficienti per training
+        # Controllo che ci siano abbastanza dati per l'addestramento
         if len(df) < 20:
-            raise ValueError(f"Insufficient data for training: {len(df)} samples")
+            raise ValueError(f"Dati insufficienti per l'addestramento: {len(df)} campioni")
         
-        # Split train/test (80/20)
+        # Divisione in set di addestramento e test (80/20)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        logger.info(f"Training set size: {X_train.shape[0]}")
-        logger.info(f"Test set size: {X_test.shape[0]}")        
+        logger.info(f"Dimensione set di addestramento: {X_train.shape[0]}")
+        logger.info(f"Dimensione set di test: {X_test.shape[0]}")
         
-        # ========== TRAINING MODELLO ==========
+        # ========== ADDESTRAMENTO MODELLO ==========
         
+        # Inizializzazione del modello RandomForestClassifier
         model = RandomForestClassifier(n_estimators=20, random_state=42)
-        
-        logger.info("Starting model training...")
+        logger.info("Avvio addestramento del modello...")
         
         model.fit(X_train, y_train)
-        
-        logger.info("Training completed")
+        logger.info("Addestramento completato")
         
         
         # ========== VALUTAZIONE MODELLO ==========
         
+        # Predizioni sui set di training e test        
         y_train_pred = model.predict(X_train)
         y_test_pred = model.predict(X_test)
-        train_mae = mean_absolute_error(y_train, y_train_pred)
-        test_mae = mean_absolute_error(y_test, y_test_pred)
-        train_r2 = r2_score(y_train, y_train_pred)
-        test_r2 = r2_score(y_test, y_test_pred)
-        
-        logger.info("=== MODEL EVALUATION ===")
-        logger.info(f"Training MAE: {train_mae:.4f}")
-        logger.info(f"Test MAE: {test_mae:.4f}")
-        logger.info(f"Training R²: {train_r2:.4f}")
-        logger.info(f"Test R²: {test_r2:.4f}")
+
+        # Calcolo dell'accuratezza per training e test
+        train_accuracy = accuracy_score(y_train, y_train_pred)
+        test_accuracy = accuracy_score(y_test, y_test_pred)
+
+        logger.info("=== VALUTAZIONE MODELLO ===")
+        logger.info(f"Accuratezza training: {train_accuracy:.4f}")
+        logger.info(f"Accuratezza test: {test_accuracy:.4f}")
+        logger.info(f"Report di classificazione (test):\n{classification_report(y_test, y_test_pred)}")
         
         # ========== SALVATAGGIO MODELLO ==========
         
+        # Serializzazione del modello 
         model_binary = pickle.dumps(model)
         model_filename = "model_processed.pkl"
+
+        # Salvataggio del modello nel bucket S3
         s3_client.put_object(
             Bucket='room-occupancy-models',
             Key=model_filename,
             Body=model_binary,
             ContentType='application/octet-stream'
         )
-        logger.info(f"Model saved to s3://room-occupancy-models/{model_filename}")
+        logger.info(f"Modello salvato in s3://room-occupancy-models/{model_filename}")
         
-        # ========== RESPONSE ==========
+        # ========== RISPOSTA ==========
         
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'message': 'Model training completed successfully',
+                'message': 'Addestramento modello completato con successo',
                 'model_file': model_filename,
                 'model_performance': {
-                    'train_mae': float(train_mae),
-                    'test_mae': float(test_mae),
-                    'train_r2': float(train_r2),
-                    'test_r2': float(test_r2)
+                    'train_accuracy': float(train_accuracy),
+                    'test_accuracy': float(test_accuracy),
+                    'classification_report': classification_report(y_test, y_test_pred, output_dict=True)
                 },
                 'dataset_size': len(df),
                 'features_used': list(X.columns)
@@ -149,11 +156,11 @@ def lambda_handler(event, context):
         }
         
     except Exception as e:
-        logger.error(f"Model training failed: {str(e)}")
+        logger.error(f"Addestramento modello fallito: {str(e)}")
         return {
             'statusCode': 500,
             'body': json.dumps({
-                'error': 'Model training failed',
+                'error': 'Addestramento modello fallito',
                 'message': str(e)
             })
         }
