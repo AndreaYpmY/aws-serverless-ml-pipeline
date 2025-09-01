@@ -29,11 +29,24 @@
 		{
 			"Effect": "Allow",
 			"Action": [
+				"s3:ListBucket",
+				"s3:GetObject",
+				"s3:PutObject",
+				"s3:PutObjectAcl"
+			],
+			"Resource": [
+				"arn:aws:s3:::room-occupancy-models",
+				"arn:aws:s3:::room-occupancy-models/*"
+			]
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
 				"logs:CreateLogGroup",
 				"logs:CreateLogStream",
 				"logs:PutLogEvents"
 			],
-			"Resource": "*"
+			"Resource": "arn:aws:logs:*:*:*"
 		}
 	]
 }
